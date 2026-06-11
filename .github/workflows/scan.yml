@@ -2,8 +2,9 @@ name: STOCKSONAR scan
 
 on:
   schedule:
+    # 미국 프리장~애프터장(UTC 기준), 평일, 20분마다 (혼잡한 정각 회피)
     - cron: '7,27,47 8-23 * * 1-5'
-  workflow_dispatch: {}
+  workflow_dispatch: {}      # 수동 실행 버튼
 
 permissions:
   contents: write
@@ -31,6 +32,10 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
         run: python pipeline.py
 
       - name: Commit & push data.json
