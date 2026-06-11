@@ -2,9 +2,8 @@ name: STOCKSONAR scan
 
 on:
   schedule:
-    # 미국 프리장~애프터장(UTC 기준), 평일, 20분마다 (혼잡한 정각 회피)
     - cron: '7,27,47 8-23 * * 1-5'
-  workflow_dispatch: {}      # 수동 실행 버튼
+  workflow_dispatch: {}
 
 permissions:
   contents: write
