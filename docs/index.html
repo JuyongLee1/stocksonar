@@ -182,6 +182,17 @@ tr.rowHl:hover td{background:#f7fbfe;cursor:pointer}
 .modal .go{width:100%;padding:13px;border-radius:99px;background:linear-gradient(90deg,#00c6db,#00a3e0);color:#fff;font-weight:800;font-size:14px;margin-top:8px;box-shadow:0 5px 16px rgba(0,184,217,.4)}
 .modal .note{font-size:11px;color:var(--dim);margin-top:13px;text-align:center}
 .alertSet{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--sub);margin-top:4px;font-weight:600}
+.sbtn{width:100%;padding:13px;border-radius:12px;font-weight:800;font-size:14px;margin-bottom:9px;display:flex;align-items:center;justify-content:center;gap:8px;border:1px solid transparent}
+.sbtn.kakao{background:#FEE500;color:#191919}
+.sbtn.google{background:#fff;border-color:var(--line2);color:var(--navy)}
+.sbtn:hover{filter:brightness(.97)}
+.lockWrap{position:relative}
+.lockBlur{filter:blur(7px);pointer-events:none;user-select:none}
+.tblWrap{position:relative}
+.lockOverlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding-top:90px;z-index:5;background:linear-gradient(180deg,rgba(245,249,252,0) 0%,rgba(245,249,252,.94) 30%);text-align:center}
+.lockOverlay h3{font-size:18px;margin-bottom:6px}
+.lockOverlay p{font-size:13px;color:var(--sub);margin-bottom:16px}
+.lockOverlay .ic{font-size:34px;margin-bottom:8px}
 #toastWrap{position:fixed;right:18px;bottom:18px;z-index:200;display:flex;flex-direction:column;gap:9px}
 .toast{background:#fff;border:1px solid var(--line2);border-left:4px solid var(--cyan);border-radius:14px;padding:13px 16px;width:310px;font-size:13px;animation:fadeUp .3s ease;box-shadow:var(--shadow2);color:var(--navy)}
 .toast b{color:var(--cyan2)}
@@ -197,6 +208,7 @@ tr.rowHl:hover td{background:#f7fbfe;cursor:pointer}
 .disclaimer .in{padding:16px 18px;border:1px dashed var(--line2);border-radius:14px;font-size:11.5px;color:var(--dim);line-height:1.7;background:#fff}
 footer{text-align:center;font-size:11px;color:var(--dim);padding:26px 0 40px}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
@@ -211,11 +223,12 @@ footer{text-align:center;font-size:11px;color:var(--dim);padding:26px 0 40px}
   <div class="fx">USD/KRW <b id="fxRate"></b></div>
   <button class="bellBtn" id="bellBtn" onclick="toggleAlarms()" style="display:none">🔔<span class="badge" id="alarmCnt">0</span></button>
   <button class="btnP" id="loginBtn" onclick="openLogin()">무료로 시작</button>
-  <div class="userChip" id="userChip" style="display:none"><div class="av" id="userAv"></div><span id="userName"></span></div>
+  <div class="userChip" id="userChip" style="display:none;cursor:pointer" title="클릭하면 로그아웃" onclick="if(confirm('로그아웃 할까요?'))logout()"><div class="av" id="userAv"></div><span id="userName"></span></div>
 </div>
 
 <div class="alarmPanel" id="alarmPanel">
   <h4>🔔 알림 — 소나 점수 <span id="alarmThLbl">70</span>점 이상 자동 감지</h4>
+  <div style="margin:-2px 0 10px"><input type="range" min="50" max="90" step="5" value="70" id="alarmThPanel" style="width:100%;accent-color:var(--cyan)" oninput="setTh(+this.value)"></div>
   <div id="alarmList"></div>
 </div>
 
@@ -314,21 +327,34 @@ footer{text-align:center;font-size:11px;color:var(--dim);padding:26px 0 40px}
 <div class="overlay" id="loginOverlay">
   <div class="modal">
     <h3>무료로 시작하기</h3>
-    <p>이메일만 입력하면 관심종목 ⭐ 과 소나 점수 알림 🔔 이 켜집니다. (데모 — 서버 전송 없음)</p>
-    <input id="emailInput" placeholder="이메일 주소">
-    <div class="alertSet">알림 기준 점수: <input type="range" min="50" max="90" step="5" value="70" id="alarmTh" oninput="document.getElementById('alarmThVal').textContent=this.value"> <b id="alarmThVal">70</b>점</div>
-    <button class="go" onclick="doLogin()">⚡ 시작하기</button>
-    <div class="note">실제 서비스에서는 회원가입 + 푸시/텔레그램 알림 연동 단계입니다</div>
+    <p>로그인하면 관심종목 ⭐ 과 알림 설정이 계정에 저장되어 어느 기기에서나 동기화됩니다.</p>
+    <button class="sbtn kakao" onclick="loginWith('kakao')">💬 카카오로 시작하기</button>
+    <button class="sbtn google" onclick="loginWith('google')"><b style="font-family:Arial">G</b> 구글로 시작하기</button>
+    <div id="demoLoginBox" style="display:none">
+      <div style="text-align:center;color:var(--dim);font-size:11px;margin:10px 0">— 데모 모드 —</div>
+      <input id="emailInput" placeholder="이메일 주소">
+      <div class="alertSet">알림 기준 점수: <input type="range" min="50" max="90" step="5" value="70" id="alarmTh" oninput="document.getElementById('alarmThVal').textContent=this.value"> <b id="alarmThVal">70</b>점</div>
+      <button class="go" onclick="demoLogin()">⚡ 데모로 시작</button>
+    </div>
+    <div class="note" id="loginNote">간편 로그인 — 별도 비밀번호가 필요 없습니다</div>
   </div>
 </div>
 
 <div id="toastWrap"></div>
 
 <script>
-/* =================== STOCKSONAR LIVE =================== */
+/* =================== STOCKSONAR LIVE + AUTH =================== */
+/* ── Supabase 설정: 가이드에 따라 아래 두 값을 본인 값으로 교체하세요 ── */
+const SUPABASE_URL = "SUPABASE_URL_여기에_붙여넣기";
+const SUPABASE_ANON_KEY = "SUPABASE_ANON_KEY_여기에_붙여넣기";
+/* ──────────────────────────────────────────────────────────── */
+const AUTH_ON = SUPABASE_URL.startsWith("https://");
+const sb = AUTH_ON ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+const TEASER=2;  // 비로그인 맛보기 건수
 let FX=1450, NEWS=[], QUOTES={};
-let user=null, watch=new Set(), alarms=[], feedFilter='all', scanF={penny:false,lowfloat:false,good:false}, sortKey='score';
-try{const s=localStorage.getItem('sonar_user'); if(s){user=JSON.parse(s); watch=new Set(user.watch||[]);}}catch(e){}
+let user=null, watch=new Set(), alarms=[], alarmTh=70;
+let feedFilter='all', scanF={penny:false,lowfloat:false,good:false}, sortKey='score';
 
 /* ---------- 유틸 ---------- */
 const $=id=>document.getElementById(id);
@@ -345,6 +371,80 @@ const chgTxt=c=>c==null?'<span class="mini">—</span>':`<b style="color:${c>=0?
 const ago=iso=>{const s=(Date.now()-new Date(iso).getTime())/1000;if(s<60)return'방금';if(s<3600)return Math.floor(s/60)+'분 전';if(s<86400)return Math.floor(s/3600)+'시간 전';return Math.floor(s/86400)+'일 전';};
 const tstr=iso=>new Date(iso).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
 
+/* ---------- 인증 ---------- */
+async function initAuth(){
+  if(!AUTH_ON){
+    $('demoLoginBox').style.display='block';
+    $('loginNote').textContent='Supabase 설정 전이라 데모 모드로 동작합니다 (이 브라우저에만 저장)';
+    try{const s=localStorage.getItem('sonar_user'); if(s){const u=JSON.parse(s);user={email:u.email,demo:true};watch=new Set(u.watch||[]);alarmTh=u.th||70;}}catch(e){}
+    applyUser();return;
+  }
+  sb.auth.onAuthStateChange(async (ev,session)=>{
+    if(session&&session.user){
+      user=session.user;
+      await loadProfile();
+      applyUser();
+      if(NEWS.length){fireAlarms();refreshViews();}
+      if(ev==='SIGNED_IN')toast(`<b>환영합니다!</b><div class="tt">관심종목이 계정에 동기화됩니다</div>`);
+    }else{
+      user=null;watch=new Set();alarmTh=70;applyUser();
+      if(NEWS.length)refreshViews();
+    }
+  });
+}
+async function loadProfile(){
+  try{
+    const {data}=await sb.from('profiles').select('*').eq('id',user.id).maybeSingle();
+    if(data){watch=new Set(data.watch||[]);alarmTh=data.alarm_th??70;}
+    else{await sb.from('profiles').insert({id:user.id});watch=new Set();alarmTh=70;}
+  }catch(e){console.warn('profile load 실패',e);}
+}
+async function saveProfile(){
+  if(!user)return;
+  if(!AUTH_ON||user.demo){
+    try{localStorage.setItem('sonar_user',JSON.stringify({email:user.email,th:alarmTh,watch:[...watch]}));}catch(e){}
+    return;
+  }
+  try{await sb.from('profiles').upsert({id:user.id,watch:[...watch],alarm_th:alarmTh,updated_at:new Date().toISOString()});}
+  catch(e){console.warn('profile save 실패',e);}
+}
+function loginWith(p){
+  if(!AUTH_ON){demoLogin();return;}
+  sb.auth.signInWithOAuth({provider:p,options:{redirectTo:location.origin+location.pathname}});
+}
+function demoLogin(){
+  const em=($('emailInput')&&$('emailInput').value.trim())||'guest@demo.kr';
+  user={email:em,demo:true};alarmTh=+($('alarmTh')?$('alarmTh').value:70);
+  saveProfile();$('loginOverlay').classList.remove('show');applyUser();fireAlarms();refreshViews();
+  toast(`<b>데모 로그인</b> ${em}<div class="tt">SONAR ${alarmTh}점 이상 신호가 알림함에 모입니다</div>`);
+}
+async function logout(){
+  if(AUTH_ON&&user&&!user.demo){await sb.auth.signOut();}
+  else{user=null;watch=new Set();try{localStorage.removeItem('sonar_user');}catch(e){}applyUser();refreshViews();}
+  toast('<b>로그아웃 되었습니다</b>');
+}
+function applyUser(){
+  if(user){
+    const meta=user.user_metadata||{};
+    const nm=meta.name||meta.full_name||meta.preferred_username||(user.email||'회원').split('@')[0];
+    $('loginBtn').style.display='none';$('userChip').style.display='flex';$('bellBtn').style.display='block';
+    $('userName').textContent=nm;
+    const av=$('userAv');
+    if(meta.avatar_url){av.style.backgroundImage=`url(${meta.avatar_url})`;av.style.backgroundSize='cover';av.textContent='';}
+    else{av.style.backgroundImage='';av.textContent=(nm[0]||'유').toUpperCase();}
+    $('alarmThLbl').textContent=alarmTh;
+    if($('alarmThPanel'))$('alarmThPanel').value=alarmTh;
+  }else{
+    $('loginBtn').style.display='';$('userChip').style.display='none';$('bellBtn').style.display='none';
+  }
+}
+function setTh(v){alarmTh=v;$('alarmThLbl').textContent=v;saveProfile();fireAlarms();}
+function refreshViews(){
+  renderFeed(true);
+  if($('view-scan').style.display!=='none')renderScan();
+  if($('view-search').style.display!=='none')$('searchResult').innerHTML=user?'<div class="empty">티커를 검색하거나 위 추천 종목을 눌러보세요</div>':lockedBox('종목 검색은 무료 회원 전용입니다');
+}
+
 /* ---------- 데이터 로드 ---------- */
 async function loadData(){
   let d=null;
@@ -359,7 +459,7 @@ async function loadData(){
   $('statGood').textContent=NEWS.filter(n=>n.sent==='good').length;
   $('statBad').textContent=NEWS.filter(n=>n.sent==='bad').length;
   if($('statUpd'))$('statUpd').textContent=d.updated?tstr(d.updated)+' 갱신':'—';
-  applyUser();renderFeed(true);
+  renderFeed(true);
   if(document.getElementById('view-scan').style.display!=='none')renderScan();
   if(user)fireAlarms();
 }
@@ -411,6 +511,15 @@ function renderFeed(instant){
   const list=$('feedList');const items=feedItems();
   if(feedFilter==='watch'&&!user){list.innerHTML='<div class="empty">로그인하면 관심종목을 모아볼 수 있습니다</div>';return;}
   if(!items.length){list.innerHTML='<div class="empty">조건에 맞는 뉴스가 없습니다 — 다음 스캔을 기다리는 중 📡</div>';return;}
+  if(!user&&items.length>TEASER){
+    const teaser=items.slice(0,TEASER).map(cardHtml).join('');
+    const hidden=items.slice(TEASER,TEASER+3).map(cardHtml).join('');
+    list.innerHTML=teaser+`<div class="lockWrap"><div class="lockBlur">${hidden}</div>
+      <div class="lockOverlay"><div class="ic">🔒</div><h3>전체 분석은 무료 회원 전용입니다</h3>
+      <p>분석 ${items.length}건 중 ${TEASER}건만 표시 중 — 가입은 10초면 충분합니다</p>
+      <button class="btnP" onclick="openLogin()">⚡ 무료로 시작하기</button></div></div>`;
+    return;
+  }
   list.innerHTML=items.slice(0,100).map(cardHtml).join('');
 }
 
@@ -429,7 +538,7 @@ function renderScan(){
     .filter(r=>r.n.score>=min);
   const kf={score:r=>r.n.score,price:r=>r.q.price,chg:r=>r.q.chg??-999,mcap:r=>r.q.mcapM,shares:r=>r.q.sharesM};
   rows.sort((a,b)=>kf[sortKey](b)-kf[sortKey](a));
-  $('scanBody').innerHTML=rows.length?rows.map((r,i)=>`<tr class="rowHl" onclick="openTicker('${r.n.tk}')">
+  const rowHtml=(r,i)=>`<tr class="rowHl" onclick="openTicker('${r.n.tk}')">
     <td class="rank">${i+1}</td>
     <td><span class="scorePill" style="color:${sColor(r.n.score)}">${r.n.score}<span class="scoreBar"><i style="width:${r.n.score}%;background:${sColor(r.n.score)}"></i></span></span></td>
     <td><b>${r.n.tk}</b><div class="mini">${r.n.name||''}</div></td>
@@ -439,7 +548,19 @@ function renderScan(){
     <td>${fmt(r.q.sharesM,2)}M ${r.q.sharesM&&r.q.sharesM<25?'<span class="pill p-float" style="font-size:9px;padding:2px 7px">LOW</span>':''}</td>
     <td class="rk">${rockets(r.n.score)}</td>
     <td class="mini" style="white-space:normal;max-width:220px">${(r.n.ko||'').length>38?r.n.ko.slice(0,38)+'…':(r.n.ko||'')}</td>
-  </tr>`).join(''):'<tr><td colspan="9" class="empty">조건에 맞는 종목이 없습니다</td></tr>';
+  </tr>`;
+  const emptyRow='<tr><td colspan="9" class="empty">조건에 맞는 종목이 없습니다</td></tr>';
+  const tbl=document.querySelector('#view-scan table');
+  const wrap=document.querySelector('#view-scan .tblWrap');
+  const ov=document.getElementById('scanLock');
+  if(!user){
+    $('scanBody').innerHTML=rows.slice(0,5).map(rowHtml).join('')||emptyRow;
+    tbl.classList.add('lockBlur');
+    if(!ov)wrap.insertAdjacentHTML('beforeend','<div class="lockOverlay" id="scanLock" style="padding-top:46px"><div class="ic">🔒</div><h3>스캐너는 무료 회원 전용입니다</h3><p>로그인하면 전체 랭킹과 필터를 사용할 수 있습니다</p><button class="btnP" onclick="openLogin()">⚡ 무료로 시작하기</button></div>');
+    return;
+  }
+  tbl.classList.remove('lockBlur');if(ov)ov.remove();
+  $('scanBody').innerHTML=rows.length?rows.map(rowHtml).join(''):emptyRow;
 }
 
 /* ---------- 검색 ---------- */
@@ -449,12 +570,15 @@ function renderSuggest(){
   $('suggestChips').innerHTML=top.map(t=>`<button class="chip" onclick="openTicker('${t}')">$${t}</button>`).join('');
 }
 function doSearch(){
+  if(!user){$('searchResult').innerHTML=lockedBox('종목 검색은 무료 회원 전용입니다');return;}
   const v=$('searchInput').value.trim().toLowerCase();if(!v){$('searchResult').innerHTML='<div class="empty">티커를 검색하거나 위 추천 종목을 눌러보세요</div>';return;}
   const hit=Object.entries(QUOTES).find(([t,q])=>t.toLowerCase().includes(v)||(q.name||'').toLowerCase().includes(v)||NEWS.some(n=>n.tk===t&&(n.ko||'').toLowerCase().includes(v)));
   hit?showDetail(hit[0]):$('searchResult').innerHTML='<div class="empty">검색 결과가 없습니다 (최근 30일 분석 종목만 검색됩니다)</div>';
 }
+function lockedBox(t){return `<div class="detail" style="text-align:center;padding:44px 20px"><div style="font-size:34px;margin-bottom:10px">🔒</div><h3 style="margin-bottom:6px">${t}</h3><p style="font-size:13px;color:var(--sub);margin-bottom:16px">무료 회원으로 로그인하면 바로 볼 수 있습니다</p><button class="btnP" onclick="openLogin()">⚡ 무료로 시작하기</button></div>`;}
 function openTicker(t){go('search');$('searchInput').value=t;showDetail(t);}
 function showDetail(t){
+  if(!user){$('searchResult').innerHTML=lockedBox('종목 상세는 무료 회원 전용입니다');return;}
   const q=QUOTES[t];if(!q)return;
   const news=NEWS.filter(n=>n.tk===t);
   $('searchResult').innerHTML=`<div class="detail">
@@ -473,30 +597,18 @@ function showDetail(t){
     ${news.length?news.map(cardHtml).join(''):'<div class="empty">최근 30일 내 분석된 뉴스가 없습니다</div>'}`;
 }
 
-/* ---------- 회원/알림 (브라우저 저장) ---------- */
+/* ---------- 관심종목/알림 ---------- */
 function openLogin(){$('loginOverlay').classList.add('show');}
-function doLogin(){
-  const em=$('emailInput').value.trim()||'guest@demo.kr';
-  user={email:em,th:+$('alarmTh').value,watch:[...watch]};
-  try{localStorage.setItem('sonar_user',JSON.stringify(user));}catch(e){}
-  $('loginOverlay').classList.remove('show');applyUser();fireAlarms();
-  toast(`<b>환영합니다!</b> ${em}<div class="tt">SONAR ${user.th}점 이상 신호가 알림함에 모입니다</div>`);
-}
-function applyUser(){
-  if(!user)return;
-  $('loginBtn').style.display='none';$('userChip').style.display='flex';$('bellBtn').style.display='block';
-  $('userName').textContent=user.email.split('@')[0];$('userAv').textContent=user.email[0].toUpperCase();
-  $('alarmThLbl').textContent=user.th;
-}
 function toggleWatch(t,el){
   if(!user){openLogin();return;}
   watch.has(t)?watch.delete(t):watch.add(t);el.classList.toggle('on');
-  user.watch=[...watch];try{localStorage.setItem('sonar_user',JSON.stringify(user));}catch(e){}
+  saveProfile();
   if(watch.has(t))toast(`<b>$${t}</b> 관심종목에 추가됨 ⭐`);
   if(feedFilter==='watch')renderFeed(true);
 }
 function fireAlarms(){
-  alarms=NEWS.filter(n=>n.score>=user.th&&n.sent==='good').slice(0,30).map(n=>({tk:n.tk,score:n.score,ko:n.ko,time:n.time}));
+  if(!user)return;
+  alarms=NEWS.filter(n=>n.score>=alarmTh&&n.sent==='good').slice(0,30).map(n=>({tk:n.tk,score:n.score,ko:n.ko,time:n.time}));
   $('alarmCnt').textContent=alarms.length;
   $('alarmList').innerHTML=alarms.map(a=>`<div class="alItem"><b>$${a.tk}</b> SONAR ${a.score} — ${a.ko}<div class="tt">${tstr(a.time)} 감지</div></div>`).join('')||'<div class="empty" style="padding:16px">알림 없음</div>';
 }
@@ -507,6 +619,7 @@ function toast(html){
 }
 
 /* ---------- 초기화 ---------- */
+initAuth();
 loadData();
 setInterval(loadData,5*60*1000);  // 5분마다 새 데이터 확인
 document.addEventListener('click',e=>{if(!e.target.closest('.alarmPanel')&&!e.target.closest('.bellBtn'))$('alarmPanel').classList.remove('show');});
