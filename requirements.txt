@@ -2,3 +2,4 @@ anthropic>=0.40.0
 feedparser>=6.0.11
 yfinance>=0.2.50
 requests>=2.31.0
+pywebpush>=2.0.0

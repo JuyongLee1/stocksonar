@@ -283,6 +283,64 @@ def telegram_alert(item):
         log(f"텔레그램 실패: {ex}")
 
 
+# ════════════════════════════════ 6. 웹푸시 (PWA 알림) ═══════════════════
+SITE_URL = os.environ.get("SITE_URL", "https://juyonglee1.github.io/stocksonar/")
+
+
+def send_web_push(items):
+    """회원별 기준점수(profiles.alarm_th)에 맞춰 새 호재 뉴스를 푸시 발송"""
+    good = [i for i in items if i.get("sent") == "good"]
+    if not good:
+        return
+    su = os.environ.get("SUPABASE_URL")
+    sk = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    pk = os.environ.get("VAPID_PRIVATE_KEY")
+    subj = os.environ.get("VAPID_SUBJECT", "mailto:admin@stocksonar.app")
+    if not (su and sk and pk):
+        log("웹푸시 미설정(시크릿 없음) — 건너뜀")
+        return
+    if MOCK:
+        log(f"MOCK: 웹푸시 발송 시뮬레이션 — 호재 {len(good)}건")
+        return
+    import requests
+    from urllib.parse import quote
+    from pywebpush import webpush, WebPushException
+    H = {"apikey": sk, "Authorization": f"Bearer {sk}"}
+    try:
+        profs = {p["id"]: p.get("alarm_th") or 70 for p in
+                 requests.get(f"{su}/rest/v1/profiles?select=id,alarm_th", headers=H, timeout=15).json()}
+        subs = requests.get(f"{su}/rest/v1/push_subs?select=endpoint,user_id,subscription",
+                            headers=H, timeout=15).json()
+    except Exception as ex:
+        log(f"웹푸시: 구독자 조회 실패 {ex}")
+        return
+    sent = 0
+    for s in subs:
+        th = profs.get(s["user_id"], 70)
+        for it in good:
+            if it["score"] < th:
+                continue
+            payload = json.dumps({"title": f"📡 SONAR {it['score']} — ${it['tk']}",
+                                  "body": it["ko"], "url": SITE_URL, "tag": it["tk"]},
+                                 ensure_ascii=False)
+            try:
+                webpush(subscription_info=s["subscription"], data=payload,
+                        vapid_private_key=pk, vapid_claims={"sub": subj})
+                sent += 1
+            except WebPushException as ex:
+                code = ex.response.status_code if ex.response is not None else 0
+                if code in (404, 410):   # 만료된 구독 정리
+                    try:
+                        requests.delete(f"{su}/rest/v1/push_subs?endpoint=eq.{quote(s['endpoint'], safe='')}",
+                                        headers=H, timeout=10)
+                    except Exception:
+                        pass
+                    break
+            except Exception as ex:
+                log(f"웹푸시 발송 오류: {ex}")
+    log(f"웹푸시 발송 완료 — {sent}건")
+
+
 # ════════════════════════════════ 메인 ═══════════════════════════════════
 def main():
     data = load_data()
@@ -338,6 +396,8 @@ def main():
         if ai["score"] >= ALERT_MIN_SCORE and ai["sent"] == "good":
             telegram_alert(item)
         time.sleep(0.5)                    # API 예의상 간격
+
+    send_web_push(new_items)
 
     # 병합: 새 항목 앞에, 오래된 항목 제거
     cutoff = (now_utc() - timedelta(days=KEEP_DAYS)).isoformat()
