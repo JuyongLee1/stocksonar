@@ -208,6 +208,12 @@ tr.rowHl:hover td{background:#f7fbfe;cursor:pointer}
 .disclaimer .in{padding:16px 18px;border:1px dashed var(--line2);border-radius:14px;font-size:11.5px;color:var(--dim);line-height:1.7;background:#fff}
 footer{text-align:center;font-size:11px;color:var(--dim);padding:26px 0 40px}
 </style>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#00b8d9">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="STOCKSONAR">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
@@ -222,6 +228,7 @@ footer{text-align:center;font-size:11px;color:var(--dim);padding:26px 0 40px}
   <div class="spacer"></div>
   <div class="fx">USD/KRW <b id="fxRate"></b></div>
   <button class="bellBtn" id="bellBtn" onclick="toggleAlarms()" style="display:none">🔔<span class="badge" id="alarmCnt">0</span></button>
+  <button class="btnS" id="installBtn" style="display:none" onclick="installApp()">📲 앱 설치</button>
   <button class="btnP" id="loginBtn" onclick="openLogin()">무료로 시작</button>
   <div class="userChip" id="userChip" style="display:none;cursor:pointer" title="클릭하면 로그아웃" onclick="if(confirm('로그아웃 할까요?'))logout()"><div class="av" id="userAv"></div><span id="userName"></span></div>
 </div>
@@ -229,6 +236,7 @@ footer{text-align:center;font-size:11px;color:var(--dim);padding:26px 0 40px}
 <div class="alarmPanel" id="alarmPanel">
   <h4>🔔 알림 — 소나 점수 <span id="alarmThLbl">70</span>점 이상 자동 감지</h4>
   <div style="margin:-2px 0 10px"><input type="range" min="50" max="90" step="5" value="70" id="alarmThPanel" style="width:100%;accent-color:var(--cyan)" oninput="setTh(+this.value)"></div>
+  <button class="btnP" id="pushBtn" style="width:100%;justify-content:center;margin-bottom:10px" onclick="enablePush()">📲 폰 푸시 알림 켜기</button>
   <div id="alarmList"></div>
 </div>
 
@@ -617,6 +625,41 @@ function toast(html){
   const el=document.createElement('div');el.className='toast';el.innerHTML=html;$('toastWrap').appendChild(el);
   setTimeout(()=>{el.style.opacity='0';el.style.transition='opacity .4s';setTimeout(()=>el.remove(),400);},4200);
 }
+
+/* ---------- PWA / 푸시 ---------- */
+const VAPID_PUBLIC="BKRA0HFtpaPWrtV3-aGd8dFAMRbkuNEHrM_RnVh6ereDIFVts7y_qcSmlb0lbf4C8CaB6_U0eLTvXCmSXOM-X38";
+if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(e=>console.warn('SW 등록 실패',e));}
+let deferredPrompt=null;
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;const b=$('installBtn');if(b)b.style.display='inline-flex';});
+window.addEventListener('appinstalled',()=>{const b=$('installBtn');if(b)b.style.display='none';toast('<b>📲 설치 완료!</b><div class="tt">홈 화면에서 STOCKSONAR를 열 수 있습니다</div>');});
+async function installApp(){
+  if(!deferredPrompt){toast('<b>설치 방법</b><div class="tt">브라우저 메뉴(⋮ 또는 공유)에서 \'홈 화면에 추가\'를 눌러주세요</div>');return;}
+  deferredPrompt.prompt();deferredPrompt=null;
+}
+function urlB64(b){const p='='.repeat((4-b.length%4)%4);const r=(b+p).replace(/-/g,'+').replace(/_/g,'/');const raw=atob(r);return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));}
+async function enablePush(){
+  if(!user||user.demo){openLogin();return;}
+  if(!('serviceWorker' in navigator)||!('PushManager' in window)){
+    toast('<b>이 브라우저는 푸시 미지원</b><div class="tt">아이폰은 사파리에서 \'홈 화면에 추가\' 후 앱에서 켜주세요</div>');return;}
+  try{
+    const reg=await navigator.serviceWorker.ready;
+    const perm=await Notification.requestPermission();
+    if(perm!=='granted'){toast('<b>알림 권한이 거부되었습니다</b><div class="tt">브라우저 설정에서 허용으로 바꿔주세요</div>');return;}
+    const sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlB64(VAPID_PUBLIC)});
+    await sb.from('push_subs').upsert({endpoint:sub.endpoint,user_id:user.id,subscription:sub.toJSON()},{onConflict:'endpoint'});
+    $('pushBtn').textContent='📲 푸시 알림 켜짐 ✓';
+    toast(`<b>📲 푸시 알림 켜짐!</b><div class="tt">SONAR ${alarmTh}점 이상 신호를 이 기기로 보내드립니다</div>`);
+  }catch(e){console.warn(e);toast('<b>푸시 설정 실패</b><div class="tt">'+(e.message||'')+'</div>');}
+}
+async function syncPushBtn(){
+  try{
+    if(!('serviceWorker' in navigator))return;
+    const reg=await navigator.serviceWorker.ready;
+    const sub=await reg.pushManager.getSubscription();
+    if(sub&&$('pushBtn'))$('pushBtn').textContent='📲 푸시 알림 켜짐 ✓';
+  }catch(e){}
+}
+syncPushBtn();
 
 /* ---------- 초기화 ---------- */
 initAuth();
