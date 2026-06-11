@@ -2,7 +2,7 @@ name: STOCKSONAR scan
 
 on:
   schedule:
-    - cron: '*/20 8-23 * * 1-5'
+    - cron: '7,27,47 8-23 * * 1-5'
   workflow_dispatch: {}
 
 permissions:
