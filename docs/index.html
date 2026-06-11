@@ -650,8 +650,16 @@ if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch
 let deferredPrompt=null;
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;const b=$('installBtn');if(b)b.style.display='inline-flex';});
 window.addEventListener('appinstalled',()=>{const b=$('installBtn');if(b)b.style.display='none';toast('<b>📲 설치 완료!</b><div class="tt">홈 화면에서 STOCKSONAR를 열 수 있습니다</div>');});
+// 설치된 앱(standalone) 안이 아니면 설치 버튼 항상 표시
+const isStandalone=(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches)||window.navigator.standalone===true;
+if(!isStandalone){const b=$('installBtn');if(b)b.style.display='inline-flex';}
 async function installApp(){
-  if(!deferredPrompt){toast('<b>설치 방법</b><div class="tt">브라우저 메뉴(⋮ 또는 공유)에서 \'홈 화면에 추가\'를 눌러주세요</div>');return;}
+  if(!deferredPrompt){
+    const ios=/iphone|ipad|ipod/i.test(navigator.userAgent);
+    toast(ios?'<b>아이폰 설치 방법</b><div class="tt">사파리 하단 공유(↑) 버튼 → \'홈 화면에 추가\'</div>'
+             :'<b>설치 방법</b><div class="tt">브라우저 메뉴(⋮) → \'홈 화면에 추가\' 또는 \'앱 설치\'</div>');
+    return;
+  }
   deferredPrompt.prompt();deferredPrompt=null;
 }
 function urlB64(b){const p='='.repeat((4-b.length%4)%4);const r=(b+p).replace(/-/g,'+').replace(/_/g,'/');const raw=atob(r);return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));}
