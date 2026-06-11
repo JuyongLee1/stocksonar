@@ -18,7 +18,7 @@
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html{scroll-behavior:smooth}
-body{background:var(--bg);color:var(--navy);font-family:'Pretendard',-apple-system,BlinkMacSystemFont,'Segoe UI','Malgun Gothic',sans-serif;line-height:1.55}
+body{overscroll-behavior-y:contain;background:var(--bg);color:var(--navy);font-family:'Pretendard',-apple-system,BlinkMacSystemFont,'Segoe UI','Malgun Gothic',sans-serif;line-height:1.55}
 a{color:inherit;text-decoration:none}
 button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
 input{font-family:inherit}
@@ -684,6 +684,31 @@ async function togglePush(){
 }
 async function syncPushBtn(){setPushBtn(!!(await getPushSub()));}
 syncPushBtn();
+
+/* ---------- 당겨서 새로고침 (PWA) ---------- */
+const ptrEl=document.createElement('div');
+ptrEl.innerHTML='📡';
+ptrEl.style.cssText='position:fixed;top:-56px;left:50%;transform:translateX(-50%);width:42px;height:42px;border-radius:50%;background:#fff;box-shadow:0 4px 14px rgba(11,31,58,.2);display:flex;align-items:center;justify-content:center;font-size:19px;z-index:300;transition:top .18s';
+document.body.appendChild(ptrEl);
+let ptrY=0,ptrOn=false;
+window.addEventListener('touchstart',e=>{if(window.scrollY<=0){ptrY=e.touches[0].clientY;ptrOn=true;}},{passive:true});
+window.addEventListener('touchmove',e=>{
+  if(!ptrOn)return;
+  const d=e.touches[0].clientY-ptrY;
+  if(d>30&&window.scrollY<=0)ptrEl.style.top=Math.min(18,(d-30)/5)+'px';
+},{passive:true});
+window.addEventListener('touchend',async e=>{
+  if(!ptrOn)return;ptrOn=false;
+  const d=e.changedTouches[0].clientY-ptrY;
+  if(window.scrollY<=0&&d>90){
+    ptrEl.style.top='14px';
+    await loadData();
+    toast('<b>📡 새로고침 완료</b><div class="tt">최신 분석을 불러왔습니다</div>');
+    setTimeout(()=>{ptrEl.style.top='-56px';},500);
+  }else{
+    ptrEl.style.top='-56px';
+  }
+},{passive:true});
 
 /* ---------- 초기화 ---------- */
 initAuth();
