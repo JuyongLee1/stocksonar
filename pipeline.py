@@ -397,8 +397,6 @@ def main():
             telegram_alert(item)
         time.sleep(0.5)                    # API 예의상 간격
 
-    send_web_push(new_items)
-
     # 병합: 새 항목 앞에, 오래된 항목 제거
     cutoff = (now_utc() - timedelta(days=KEEP_DAYS)).isoformat()
     items = new_items + [i for i in data["items"] if i.get("time", "") >= cutoff]
@@ -407,6 +405,10 @@ def main():
     data["fx"] = get_fx(data.get("fx", 1450.0))
     data["updated"] = now_utc().isoformat()
     save_data(data)
+    try:                                   # 푸시 실패가 데이터 갱신을 막지 않도록
+        send_web_push(new_items)
+    except Exception as ex:
+        log(f"웹푸시 단계 오류(무시하고 계속): {ex}")
     log(f"완료 — 신규 {len(new_items)}건 / 전체 {len(data['items'])}건")
 
 
