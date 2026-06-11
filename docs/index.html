@@ -400,17 +400,22 @@ async function initAuth(){
     try{const s=localStorage.getItem('sonar_user'); if(s){const u=JSON.parse(s);user={email:u.email,demo:true};watch=new Set(u.watch||[]);alarmTh=u.th||70;}}catch(e){}
     applyUser();return;
   }
-  sb.auth.onAuthStateChange(async (ev,session)=>{
-    if(session&&session.user){
-      user=session.user;
-      await loadProfile();
-      applyUser();
-      if(NEWS.length){fireAlarms();refreshViews();}
-      if(ev==='SIGNED_IN')toast(`<b>환영합니다!</b><div class="tt">관심종목이 계정에 동기화됩니다</div>`);
-    }else{
-      user=null;watch=new Set();alarmTh=70;applyUser();
-      if(NEWS.length)refreshViews();
-    }
+  sb.auth.onAuthStateChange((ev,session)=>{
+    // 주의: 콜백 안에서 supabase를 직접 await하면 교착 발생 → setTimeout으로 지연 실행 (공식 권장)
+    setTimeout(async ()=>{
+      if(session&&session.user){
+        const first=!user;
+        user=session.user;
+        if(first||ev==='SIGNED_IN'||ev==='INITIAL_SESSION')await loadProfile();
+        applyUser();
+        if(NEWS.length){fireAlarms();refreshViews();}
+        syncPushBtn();
+        if(ev==='SIGNED_IN')toast(`<b>환영합니다!</b><div class="tt">관심종목이 계정에 동기화됩니다</div>`);
+      }else if(ev!=='INITIAL_SESSION'||!user){
+        user=null;watch=new Set();alarmTh=70;applyUser();
+        if(NEWS.length)refreshViews();
+      }
+    },0);
   });
 }
 async function loadProfile(){
