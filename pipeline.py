@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-STOCKSONAR 파이프라인
+STOCKSONAR 파이프라인 v2
 GlobeNewswire RSS 수집 → 필터링 → yfinance 시세 → Claude AI 분석 → docs/data.json 갱신 (+텔레그램 알림)
 
-GitHub Actions에서 20분마다 자동 실행되도록 설계됨. 로컬 실행도 가능:
-  ANTHROPIC_API_KEY=sk-... python pipeline.py
+v2 개선:
+- 티커가 여러 개 감지되면 Claude가 '뉴스의 실제 주체' 티커를 직접 선택 (귀속 오류 방지)
+- 일정 공지·웹캐스트·컨퍼런스 참가 등 저가치 뉴스는 AI 분석 전에 차단 (비용 절약)
+- 같은 종목의 유사 제목 재발행(재탕) 중복 제거
 
 환경변수:
   ANTHROPIC_API_KEY   (필수) Claude API 키
@@ -28,13 +30,13 @@ ALERT_MIN_SCORE = int(os.environ.get("ALERT_MIN_SCORE", "70"))
 MAX_NEW_PER_RUN = int(os.environ.get("MAX_NEW_PER_RUN", "20"))
 KEEP_DAYS = 30          # 뉴스 보관 기간
 MAX_ITEMS = 400         # data.json 최대 보관 건수
-MAX_SEEN = 2000         # 중복 방지 해시 보관 수
+MAX_SEEN = 4000         # 중복 방지 해시 보관 수
 
 # ── 미국 정규 거래소만 허용 (비상장/OTC 제외) ─────────────────────────────
 EXCH_MAP = {"NMS": "NASDAQ", "NGM": "NASDAQ", "NCM": "NASDAQ",
             "NYQ": "NYSE", "ASE": "NYSE AM", "PCX": "NYSE ARCA"}
 
-# ── 쓸모없는 뉴스 필터 (법률 소송·주주 소송 권유 등) ──────────────────────
+# ── 스팸: 법률 소송·주주 소송 권유 등 (제목+본문 검사) ────────────────────
 SPAM_KEYWORDS = [
     "class action", "investigation", "law firm", "lawsuit", "shareholder alert",
     "investor alert", "lead plaintiff", "deadline reminder", "securities fraud",
@@ -42,6 +44,18 @@ SPAM_KEYWORDS = [
     "schall law", "gross law", "kessler topaz", "hagens berman", "faruqi",
     "robbins geller", "johnson fistel", "wolf haldenstein", "kirby mcinerney",
     "total voting rights", "annual general meeting",
+]
+
+# ── 저가치: 일정·행사 공지 등 (제목만 검사, AI 분석 전 차단 → 비용 절약) ──
+LOW_VALUE_KEYWORDS = [
+    "to release", "to report", "to announce", "to present at", "to participate in",
+    "to attend", "to host", "to webcast", "fireside chat", "investor conference",
+    "conference call", "earnings call", "earnings date", "results date",
+    "financial results on", "reporting date", "to ring the", "market open bell",
+    "invitation to", "reminder:", "save the date", "files annual report",
+    "form 10-k", "form 20-f", "form 6-k", "annual report on form",
+    "monthly distribution", "declares monthly", "net asset value",
+    "closed-end fund", "completion of depositary",
 ]
 
 TICKER_RE = re.compile(
@@ -59,6 +73,12 @@ def now_utc():
 
 def h(s):
     return hashlib.sha1(s.encode("utf-8")).hexdigest()[:16]
+
+
+def norm_title_key(tk, title):
+    """재탕 방지용: 종목 + 제목 핵심 단어로 해시 (대소문자·문장부호·어순 일부 무시)"""
+    words = re.findall(r"[a-z0-9]+", title.lower())
+    return h(tk + ":" + " ".join(sorted(set(words))[:12]))
 
 
 # ════════════════════════════════ 1. 데이터 로드/저장 ════════════════════
@@ -91,6 +111,18 @@ MOCK_ENTRIES = [
     {"title": "Private Startup Announces New Product Line",
      "summary": "no ticker here", "link": "https://example.com/notk",
      "published": now_utc().isoformat()},
+    # v2 테스트: 다중 티커 — 발표 주체(NDAQ)가 아니라 대상 기업(INHD)에 귀속되어야 함
+    {"title": "Nasdaq Halts Inno Holdings Inc.",
+     "summary": "The Nasdaq Stock Market LLC (Nasdaq: NDAQ) announced that trading in Inno Holdings Inc. (NASDAQ: INHD) was halted pending additional information.",
+     "link": "https://example.com/halt", "published": now_utc().isoformat()},
+    # v2 테스트: 저가치 일정 공지 — AI 분석 없이 차단되어야 함
+    {"title": "Gamma Corp (NASDAQ: GMMA) to Report Second Quarter 2026 Financial Results",
+     "summary": "Gamma Corp will host a conference call and webcast...",
+     "link": "https://example.com/cal", "published": now_utc().isoformat()},
+    # v2 테스트: 재탕 — ACMQ와 동일 제목 어순만 다름
+    {"title": "Acme Quantum Announces $25 Million AI Data Center Contract With Sovereign Fund (NASDAQ: ACMQ)",
+     "summary": "duplicate rewrite...", "link": "https://example.com/acmq2",
+     "published": now_utc().isoformat()},
 ]
 
 
@@ -111,15 +143,25 @@ def fetch_rss():
     return out
 
 
-def extract_ticker(entry):
-    text = entry["title"] + " " + entry["summary"]
-    m = TICKER_RE.search(html.unescape(text))
-    return m.group(1) if m else None
+def extract_tickers(entry):
+    """제목 → 본문 순으로 모든 티커 후보를 추출 (순서 유지, 중복 제거, 최대 3개)"""
+    cands = []
+    for text in (entry["title"], entry["summary"]):
+        for m in TICKER_RE.finditer(html.unescape(text or "")):
+            t = m.group(1)
+            if t not in cands:
+                cands.append(t)
+    return cands[:3]
 
 
 def is_spam(entry):
     t = (entry["title"] + " " + entry["summary"]).lower()
     return any(k in t for k in SPAM_KEYWORDS)
+
+
+def is_low_value(entry):
+    t = entry["title"].lower()
+    return any(k in t for k in LOW_VALUE_KEYWORDS)
 
 
 # ════════════════════════════════ 3. 시세 (yfinance) ═════════════════════
@@ -164,39 +206,54 @@ def get_fx(prev):
 # ════════════════════════════════ 4. Claude AI 분석 ══════════════════════
 SYSTEM_PROMPT = """너는 미국 주식 단기 트레이딩 뉴스 분석가다. 영문 보도자료를 분석해 아래 JSON만 출력한다(설명 금지).
 
-{"ko":"한국어 제목(간결, 핵심 수치 포함)",
+{"tk":"뉴스의 실제 주체(대상 기업) 티커 — 반드시 주어진 후보 중에서 선택",
+ "ko":"한국어 제목(간결, 핵심 수치 포함)",
  "sum":"한국어 요약 2~3문장. 무엇이 발표됐고 왜 주가에 중요한지.",
  "sent":"good|bad|neut",
  "score":0~100 정수,
  "tags":[["+요인","p"] 또는 ["−요인","m"] 형식 3~5개],
  "cmt":"트레이더 관점 코멘트 1~2문장. 기회와 리스크를 균형있게."}
 
+tk 선택 규칙: 발표 '주체'가 거래소·지수사업자·대형 파트너(예: Nasdaq, NYSE, S&P)여도,
+뉴스로 인해 주가가 움직일 '대상 기업'의 티커를 선택하라.
+예: "Nasdaq Halts XYZ" → XYZ. "Microsoft Partners With SmallCo" → SmallCo(후보에 있다면).
+
 score(SONAR 점수) 산정 기준:
 - 촉매 강도(최대 40): 인수합병·대형계약·FDA승인 35~40 / 정부프로그램·파트너십 25~35 / 임상데이터 20~30 / 학회발표·전임상 15~25 / 홍보성PR 5~15
 - 수급 구조(최대 30): 유통주식 5M 미만 25~30 / 25M 미만 15~25 / 100M 미만 5~15 / 그 이상 0~5
 - 가격대(최대 15): $0.5~$10 사이 10~15 / $10~$30 5~10 / 그 외 0~5
 - 모멘텀(최대 15): 당일 +10% 이상 10~15 / 상승 중 5~10 / 하락 중 0~5
-- 페널티: 신주발행·전환사채·희석 −20~−40 / 소송·규제 −20~−30 / 구체성 없는 PR −10~−20
-악재(공모·희석·소송 등)는 sent="bad"로, 점수는 낮게. 판단 불가·홍보성은 "neut"."""
+- 페널티: 신주발행·전환사채·희석 −20~−40 / 소송·규제·거래중단 −20~−30 / 구체성 없는 PR −10~−20
+악재(공모·희석·소송·거래중단 등)는 sent="bad"로, 점수는 낮게. 판단 불가·홍보성은 "neut"."""
 
 
-def analyze(entry, tk, quote):
+def analyze(entry, candidates):
+    """candidates: [(tk, quote), ...] — Claude가 주체 티커를 선택해 분석"""
     if MOCK:
-        bad = "offering" in entry["title"].lower()
-        return {"ko": f"[모의] {tk} 분석 제목", "sum": "모의 요약입니다.",
+        title = entry["title"]
+        pick = next((t for t, q in candidates if t in title), candidates[0][0])
+        if "INHD" in entry["summary"]:
+            pick = "INHD"
+        bad = "offering" in title.lower() or "halt" in title.lower()
+        return {"tk": pick, "ko": f"[모의] {pick} 분석 제목", "sum": "모의 요약입니다.",
                 "sent": "bad" if bad else "good", "score": 25 if bad else 80,
                 "tags": [["+모의 태그", "p"], ["−모의 리스크", "m"]], "cmt": "모의 코멘트."}
     from anthropic import Anthropic
     client = Anthropic()
-    ctx = (f"제목: {entry['title']}\n본문 요약: {entry['summary'][:1500]}\n"
-           f"종목: {tk} ({quote.get('exch')}) 주가 ${quote['price']}, "
-           f"당일등락 {quote.get('chg')}%, 시총 {quote['mcapM']}M달러, 유통주식 {quote['sharesM']}M주")
+    cand_lines = "\n".join(
+        f"- {t}: 주가 ${q['price']}, 당일등락 {q.get('chg')}%, 시총 {q['mcapM']}M달러, "
+        f"유통주식 {q['sharesM']}M주, 거래소 {q['exch']}" for t, q in candidates)
+    ctx = (f"제목: {entry['title']}\n본문 요약: {entry['summary'][:1500]}\n\n"
+           f"티커 후보:\n{cand_lines}")
     msg = client.messages.create(model=MODEL, max_tokens=800, temperature=0.2,
                                  system=SYSTEM_PROMPT,
                                  messages=[{"role": "user", "content": ctx}])
     text = msg.content[0].text
     m = re.search(r"\{.*\}", text, re.S)
     out = json.loads(m.group(0))
+    cand_tks = [t for t, _ in candidates]
+    if out.get("tk") not in cand_tks:
+        out["tk"] = cand_tks[0]
     out["score"] = max(0, min(100, int(out.get("score", 50))))
     if out.get("sent") not in ("good", "bad", "neut"):
         out["sent"] = "neut"
@@ -241,26 +298,43 @@ def main():
         if is_spam(e):
             log(f"스팸 제외: {e['title'][:60]}")
             continue
-        tk = extract_ticker(e)
-        if not tk:
+        if is_low_value(e):
+            log(f"저가치 제외(일정/공시 공지): {e['title'][:60]}")
             continue
+        cands = extract_tickers(e)
+        if not cands:
+            continue
+        # 재탕 방지: 첫 후보 기준 제목 유사 해시
+        tkey = norm_title_key(cands[0], e["title"])
+        if tkey in seen:
+            log(f"재탕 제외: {e['title'][:60]}")
+            continue
+        seen.add(tkey)
         if analyzed >= MAX_NEW_PER_RUN:
             log("이번 실행 분석 한도 도달 — 다음 실행에서 계속")
             break
-        quote = get_quote(tk)
-        if not quote:
-            log(f"시세 없음/비정규거래소 제외: {tk}")
+        # 후보별 시세 (정규 거래소만 통과)
+        cand_quotes = []
+        for t in cands:
+            q = get_quote(t)
+            if q:
+                cand_quotes.append((t, q))
+        if not cand_quotes:
+            log(f"시세 없음/비정규거래소 제외: {','.join(cands)}")
             continue
         try:
-            ai = analyze(e, tk, quote)
+            ai = analyze(e, cand_quotes)
         except Exception as ex:
-            log(f"AI 분석 실패 {tk}: {ex}")
+            log(f"AI 분석 실패 {cands[0]}: {ex}")
             continue
         analyzed += 1
+        tk = ai.pop("tk")
+        quote = dict(next(q for t, q in cand_quotes if t == tk))
         item = {"tk": tk, "name": quote.pop("name", tk), "time": e["published"],
                 "url": e["link"], "en": e["title"], "q": quote, **ai}
         new_items.append(item)
-        log(f"분석 완료: {tk} score={ai['score']} {ai['sent']}")
+        log(f"분석 완료: {tk} score={ai['score']} {ai['sent']}"
+            + (f" (후보 {len(cand_quotes)}개 중 선택)" if len(cand_quotes) > 1 else ""))
         if ai["score"] >= ALERT_MIN_SCORE and ai["sent"] == "good":
             telegram_alert(item)
         time.sleep(0.5)                    # API 예의상 간격
